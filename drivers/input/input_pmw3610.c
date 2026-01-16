@@ -112,8 +112,10 @@ struct pmw3610_config {
 struct pmw3610_data {
 	const struct device *dev;
 	struct k_work motion_work;
+	struct k_timer poll_timer;
 	struct gpio_callback motion_cb;
 	bool smart_flag;
+	bool use_polling;
 };
 
 static int pmw3610_read(const struct device *dev,
@@ -256,6 +258,14 @@ static void pmw3610_motion_handler(const struct device *gpio_dev,
 {
 	struct pmw3610_data *data = CONTAINER_OF(
 			cb, struct pmw3610_data, motion_cb);
+
+	k_work_submit(&data->motion_work);
+}
+
+static void pmw3610_poll_timer_expiry(struct k_timer *timer)
+{
+	struct pmw3610_data *data = CONTAINER_OF(
+			timer, struct pmw3610_data, poll_timer);
 
 	k_work_submit(&data->motion_work);
 }
@@ -482,6 +492,7 @@ static int pmw3610_init(const struct device *dev)
 	const struct pmw3610_config *cfg = dev->config;
 	struct pmw3610_data *data = dev->data;
 	int ret;
+	uint32_t poll_interval_ms = CONFIG_INPUT_PMW3610_POLL_MS;
 
 	if (!spi_is_ready_dt(&cfg->spi)) {
 		LOG_ERR("%s is not ready", cfg->spi.bus->name);
@@ -489,8 +500,10 @@ static int pmw3610_init(const struct device *dev)
 	}
 
 	data->dev = dev;
+	data->use_polling = (poll_interval_ms > 0);
 
 	k_work_init(&data->motion_work, pmw3610_motion_work_handler);
+	k_timer_init(&data->poll_timer, pmw3610_poll_timer_expiry, NULL);
 
 	if (!gpio_is_ready_dt(&cfg->motion_gpio)) {
 		LOG_ERR("%s is not ready", cfg->motion_gpio.port->name);
@@ -503,13 +516,16 @@ static int pmw3610_init(const struct device *dev)
 		return ret;
 	}
 
-	gpio_init_callback(&data->motion_cb, pmw3610_motion_handler,
-			   BIT(cfg->motion_gpio.pin));
+	/* Only set up interrupt if not using polling mode */
+	if (!data->use_polling) {
+		gpio_init_callback(&data->motion_cb, pmw3610_motion_handler,
+				   BIT(cfg->motion_gpio.pin));
 
-	ret = gpio_add_callback_dt(&cfg->motion_gpio, &data->motion_cb);
-	if (ret < 0) {
-		LOG_ERR("Could not set motion callback: %d", ret);
-		return ret;
+		ret = gpio_add_callback_dt(&cfg->motion_gpio, &data->motion_cb);
+		if (ret < 0) {
+			LOG_ERR("Could not set motion callback: %d", ret);
+			return ret;
+		}
 	}
 
 	ret = pmw3610_configure(dev);
@@ -518,11 +534,20 @@ static int pmw3610_init(const struct device *dev)
 		return ret;
 	}
 
-	ret = gpio_pin_interrupt_configure_dt(&cfg->motion_gpio,
-					      GPIO_INT_EDGE_TO_ACTIVE);
-	if (ret != 0) {
-		LOG_ERR("Motion interrupt configuration failed: %d", ret);
-		return ret;
+	/* Set up interrupt only if not using polling mode */
+	if (!data->use_polling) {
+		ret = gpio_pin_interrupt_configure_dt(&cfg->motion_gpio,
+						      GPIO_INT_EDGE_TO_ACTIVE);
+		if (ret != 0) {
+			LOG_ERR("Motion interrupt configuration failed: %d", ret);
+			return ret;
+		}
+	} else {
+		/* Start polling timer if using polling mode */
+		LOG_INF("PMW3610 polling mode enabled with interval %u ms", 
+			poll_interval_ms);
+		k_timer_start(&data->poll_timer, K_MSEC(poll_interval_ms), 
+			      K_MSEC(poll_interval_ms));
 	}
 
 	ret = pm_device_runtime_enable(dev);
@@ -538,10 +563,15 @@ static int pmw3610_init(const struct device *dev)
 static int pmw3610_pm_action(const struct device *dev,
 			     enum pm_device_action action)
 {
+	struct pmw3610_data *data = dev->data;
 	int ret;
+	uint32_t poll_interval_ms = CONFIG_INPUT_PMW3610_POLL_MS;
 
 	switch (action) {
 	case PM_DEVICE_ACTION_SUSPEND:
+		if (data->use_polling) {
+			k_timer_stop(&data->poll_timer);
+		}
 		ret = pmw3610_write_reg(dev, PMW3610_SHUTDOWN, SHUTDOWN_ENABLE);
 		if (ret < 0) {
 			return ret;
@@ -551,6 +581,10 @@ static int pmw3610_pm_action(const struct device *dev,
 		ret = pmw3610_write_reg(dev, PMW3610_POWER_UP_RESET, POWER_UP_WAKEUP);
 		if (ret < 0) {
 			return ret;
+		}
+		if (data->use_polling) {
+			k_timer_start(&data->poll_timer, K_MSEC(poll_interval_ms),
+				      K_MSEC(poll_interval_ms));
 		}
 		break;
 	default:

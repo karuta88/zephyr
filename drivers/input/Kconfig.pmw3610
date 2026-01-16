@@ -8,3 +8,15 @@ config INPUT_PMW3610
 	select SPI
 	help
 	  PMW3610 low power laser mouse sensor input driver
+
+if INPUT_PMW3610
+
+config INPUT_PMW3610_POLL_MS
+	int "Polling interval in milliseconds for PMW3610"
+	default 0
+	help
+	  Set the polling interval for PMW3610 in milliseconds.
+	  Set to 0 to use interrupt-driven mode (GPIO interrupt).
+	  Set to a positive value to use polling mode.
+
+endif # INPUT_PMW3610
