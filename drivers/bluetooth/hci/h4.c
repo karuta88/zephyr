@@ -35,6 +35,14 @@ LOG_MODULE_REGISTER(bt_driver);
 
 struct h4_data {
 	struct {
+		uint8_t type;
+		struct net_buf *buf;
+		struct k_fifo fifo;
+	} tx;
+
+	bt_hci_recv_t recv;
+
+	struct {
 		struct net_buf *buf;
 		struct k_fifo   fifo;
 
@@ -56,14 +64,6 @@ struct h4_data {
 			uint8_t hdr[4];
 		};
 	} rx;
-
-	struct {
-		uint8_t         type;
-		struct net_buf *buf;
-		struct k_fifo   fifo;
-	} tx;
-
-	bt_hci_recv_t recv;
 };
 
 struct h4_config {
@@ -583,17 +583,16 @@ static int h4_setup(const struct device *dev, const struct bt_hci_setup_params *
 {
 	const struct h4_config *cfg = dev->config;
 
-	ARG_UNUSED(params);
-
 	/* Extern bt_h4_vnd_setup function.
 	 * This function executes vendor-specific commands sequence to
 	 * initialize BT Controller before BT Host executes Reset sequence.
 	 * bt_h4_vnd_setup function must be implemented in vendor-specific HCI
-	 * extansion module if CONFIG_BT_HCI_SETUP is enabled.
+	 * extension module if CONFIG_BT_HCI_SETUP is enabled.
 	 */
-	extern int bt_h4_vnd_setup(const struct device *dev);
+	extern int bt_h4_vnd_setup(const struct device *dev,
+				   const struct bt_hci_setup_params *params);
 
-	return bt_h4_vnd_setup(cfg->uart);
+	return bt_h4_vnd_setup(cfg->uart, params);
 }
 #endif
 

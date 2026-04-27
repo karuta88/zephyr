@@ -229,6 +229,19 @@ should see the following message in the terminal:
    *** Booting Zephyr OS v3.7.0 ***
    Hello World! mimxrt700_evk/mimxrt798s/cm33_cpu0
 
+SD Card Support
+***************
+
+The USDHC1 interface on the MIMXRT700-EVK is shared between the SD card socket (J47) and
+the M.2 connector (J44) through electronic switches (TMUX136). Jumper JP65 is used to select
+which interface is active:
+
+- **JP65 1-2**: Routes SDIO signals to the SD card socket (J47). Set this position when
+  using the SD card.
+- **JP65 2-3** (default): Routes SDIO signals to the M.2 connector (J44).
+
+To use the SD card, ensure JP65 is set to the 1-2 position.
+
 .. include:: ../../common/board-footer.rst.inc
 
 .. _i.MX RT700 Website:
@@ -252,7 +265,7 @@ directly, but some modifications are required (see
 for a list). The display sample can be built for this module like so:
 
 .. zephyr-app-commands::
-   :board: mimxrt700_evk
+   :board: mimxrt700_evk/mimxrt798s/cm33_cpu0
    :shield: g1120b0mipi
    :zephyr-app: samples/drivers/display
    :goals: build
@@ -269,7 +282,7 @@ region must be used, which needs to connect JP45 1-2. The display sample can be 
 module like so:
 
 .. zephyr-app-commands::
-   :board: mimxrt700_evk
+   :board: mimxrt700_evk/mimxrt798s/cm33_cpu0
    :shield: rk055hdmipi4ma0
    :zephyr-app: samples/drivers/display
    :goals: build
@@ -284,7 +297,7 @@ directly, but some modifications are required (see
 for a list). The display sample can be built for this module like so:
 
 .. zephyr-app-commands::
-   :board: mimxrt700_evk
+   :board: mimxrt700_evk/mimxrt798s/cm33_cpu0
    :shield: zc143ac72mipi
    :zephyr-app: samples/drivers/display
    :goals: build

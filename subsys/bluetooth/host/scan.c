@@ -26,7 +26,6 @@
 #include <zephyr/sys/__assert.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/check.h>
 #include <zephyr/sys/slist.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/util_macro.h>
@@ -392,6 +391,10 @@ static void select_scan_params(struct bt_le_scan_param *scan_param)
 
 static int start_scan(struct bt_le_scan_param *scan_param)
 {
+	if (IS_ENABLED(CONFIG_BT_SMP) && atomic_test_bit(bt_dev.flags, BT_DEV_ID_PENDING)) {
+		bt_id_pending_keys_update();
+	}
+
 	if (IS_ENABLED(CONFIG_BT_EXT_ADV) && BT_DEV_FEAT_LE_EXT_ADV(bt_dev.le.features)) {
 		return start_le_scan_ext(scan_param);
 	}
@@ -1022,9 +1025,9 @@ void bt_hci_le_per_adv_report_recv(struct bt_le_per_adv_sync *per_adv_sync,
 				   const struct bt_le_per_adv_sync_recv_info *info)
 {
 	struct net_buf_simple_state state;
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->recv) {
 			net_buf_simple_save(buf, &state);
 			listener->recv(per_adv_sync, info, buf);
@@ -1037,9 +1040,9 @@ void bt_hci_le_per_adv_report_recv(struct bt_le_per_adv_sync *per_adv_sync,
 static void bt_hci_le_per_adv_report_recv_failure(struct bt_le_per_adv_sync *per_adv_sync,
 						  const struct bt_le_per_adv_sync_recv_info *info)
 {
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->recv) {
 			listener->recv(per_adv_sync, info, NULL);
 		}
@@ -1180,14 +1183,14 @@ static void per_adv_sync_terminated(struct bt_le_per_adv_sync *per_adv_sync, uin
 		.sid = per_adv_sync->sid,
 		.reason = reason,
 	};
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 
 	/* Deleting before callback, so the caller will be able
 	 * to restart sync in the callback.
 	 */
 	per_adv_sync_delete(per_adv_sync);
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->term) {
 			listener->term(per_adv_sync, &term_info);
 		}
@@ -1206,7 +1209,7 @@ static void bt_hci_le_per_adv_sync_established_common(struct net_buf *buf)
 
 	struct bt_le_per_adv_sync_synced_info sync_info;
 	struct bt_le_per_adv_sync *pending_per_adv_sync;
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 	bt_addr_le_t id_addr;
 	bool unexpected_evt;
 	int err;
@@ -1312,7 +1315,7 @@ static void bt_hci_le_per_adv_sync_established_common(struct net_buf *buf)
 	sync_info.recv_enabled =
 		!atomic_test_bit(pending_per_adv_sync->flags, BT_PER_ADV_SYNC_RECV_DISABLED);
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->synced) {
 			listener->synced(pending_per_adv_sync, &sync_info);
 		}
@@ -1443,7 +1446,7 @@ static void bt_hci_le_past_received_common(struct net_buf *buf)
 #endif /* defined(CONFIG_BT_PER_ADV_SYNC_RSP) */
 
 	struct bt_le_per_adv_sync_synced_info sync_info;
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 	struct bt_le_per_adv_sync *per_adv_sync;
 	bt_addr_le_t id_addr;
 
@@ -1517,7 +1520,7 @@ static void bt_hci_le_past_received_common(struct net_buf *buf)
 	sync_info.response_slot_spacing = per_adv_sync->response_slot_spacing;
 #endif /* defined(CONFIG_BT_PER_ADV_SYNC_RSP) */
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->synced) {
 			listener->synced(per_adv_sync, &sync_info);
 		}
@@ -1562,7 +1565,7 @@ void bt_hci_le_biginfo_adv_report(struct net_buf *buf)
 {
 	struct bt_hci_evt_le_biginfo_adv_report *evt;
 	struct bt_le_per_adv_sync *per_adv_sync;
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 	struct bt_iso_biginfo biginfo;
 
 	evt = net_buf_pull_mem(buf, sizeof(*evt));
@@ -1590,7 +1593,7 @@ void bt_hci_le_biginfo_adv_report(struct net_buf *buf)
 	biginfo.framing = evt->framing;
 	biginfo.encryption = evt->encryption ? true : false;
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->biginfo) {
 			listener->biginfo(per_adv_sync, &biginfo);
 		}
@@ -1604,7 +1607,7 @@ static void bt_hci_le_df_connectionless_iq_report_common(uint8_t event, struct n
 
 	struct bt_df_per_adv_sync_iq_samples_report cte_report;
 	struct bt_le_per_adv_sync *per_adv_sync;
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 
 	if (event == BT_HCI_EVT_LE_CONNECTIONLESS_IQ_REPORT) {
 		err = hci_df_prepare_connectionless_iq_report(buf, &cte_report, &per_adv_sync);
@@ -1624,7 +1627,7 @@ static void bt_hci_le_df_connectionless_iq_report_common(uint8_t event, struct n
 		return;
 	}
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->cte_report_cb) {
 			listener->cte_report_cb(per_adv_sync, &cte_report);
 		}
@@ -1840,7 +1843,7 @@ struct bt_le_per_adv_sync *bt_le_per_adv_sync_lookup_index(uint8_t index)
 int bt_le_per_adv_sync_get_info(struct bt_le_per_adv_sync *per_adv_sync,
 				struct bt_le_per_adv_sync_info *info)
 {
-	CHECKIF(per_adv_sync == NULL || info == NULL) {
+	if (per_adv_sync == NULL || info == NULL) {
 		return -EINVAL;
 	}
 
@@ -2065,10 +2068,23 @@ int bt_le_per_adv_sync_cb_register(struct bt_le_per_adv_sync_cb *cb)
 	return 0;
 }
 
+int bt_le_per_adv_sync_cb_unregister(struct bt_le_per_adv_sync_cb *cb)
+{
+	if (cb == NULL) {
+		return -EINVAL;
+	}
+
+	if (!sys_slist_find_and_remove(&pa_sync_cbs, &cb->node)) {
+		return -ENOENT;
+	}
+
+	return 0;
+}
+
 static int bt_le_set_per_adv_recv_enable(struct bt_le_per_adv_sync *per_adv_sync, bool enable)
 {
 	struct bt_hci_cp_le_set_per_adv_recv_enable *cp;
-	struct bt_le_per_adv_sync_cb *listener;
+	struct bt_le_per_adv_sync_cb *listener, *tmp;
 	struct bt_le_per_adv_sync_state_info info;
 	struct net_buf *buf;
 	struct bt_hci_cmd_state_set state;
@@ -2113,7 +2129,7 @@ static int bt_le_set_per_adv_recv_enable(struct bt_le_per_adv_sync *per_adv_sync
 
 	info.recv_enabled = !atomic_test_bit(per_adv_sync->flags, BT_PER_ADV_SYNC_RECV_DISABLED);
 
-	SYS_SLIST_FOR_EACH_CONTAINER(&pa_sync_cbs, listener, node) {
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&pa_sync_cbs, listener, tmp, node) {
 		if (listener->state_changed) {
 			listener->state_changed(per_adv_sync, &info);
 		}

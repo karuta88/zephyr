@@ -76,11 +76,6 @@ static int i2s_stm32_enable_clock(const struct device *dev)
 
 	clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
 
-	if (!device_is_ready(clk)) {
-		LOG_ERR("clock control device not ready");
-		return -ENODEV;
-	}
-
 	ret = clock_control_on(clk, (clock_control_subsys_t)&cfg->pclken[0]);
 	if (ret != 0) {
 		LOG_ERR("Could not enable I2S clock");
@@ -188,8 +183,8 @@ static int i2s_stm32_configure(const struct device *dev, enum i2s_dir dir,
 	}
 
 	stream->master = true;
-	if (i2s_cfg->options & I2S_OPT_FRAME_CLK_SLAVE ||
-	    i2s_cfg->options & I2S_OPT_BIT_CLK_SLAVE) {
+	if (i2s_cfg->options & I2S_OPT_FRAME_CLK_TARGET ||
+	    i2s_cfg->options & I2S_OPT_BIT_CLK_TARGET) {
 		stream->master = false;
 	}
 
@@ -351,7 +346,7 @@ static int i2s_stm32_trigger(const struct device *dev, enum i2s_dir dir,
 			return -EIO;
 		}
 do_trigger_stop:
-		if (ll_func_i2s_dma_busy(cfg->i2s)) {
+		if (ll_i2s_dma_busy(cfg->i2s)) {
 			stream->state = I2S_STATE_STOPPING;
 			/*
 			 * Indicate that the transition to I2S_STATE_STOPPING
@@ -376,7 +371,7 @@ do_trigger_stop:
 
 		if (dir == I2S_DIR_TX) {
 			if ((queue_is_empty(stream->msgq) == false) ||
-						(ll_func_i2s_dma_busy(cfg->i2s))) {
+						(ll_i2s_dma_busy(cfg->i2s))) {
 				stream->state = I2S_STATE_STOPPING;
 				/*
 				 * Indicate that the transition to I2S_STATE_STOPPING
@@ -606,7 +601,7 @@ static void dma_tx_callback(const struct device *dma_dev, void *arg,
 	const struct i2s_stm32_cfg *cfg = dev->config;
 	struct i2s_stm32_data *const dev_data = dev->data;
 	struct stream *stream = &dev_data->tx;
-	size_t mem_block_size;
+	size_t mem_block_size = 0;
 	int ret;
 
 	if (status < 0) {
@@ -822,7 +817,7 @@ static int rx_stream_start(struct stream *stream, const struct device *dev)
 static int tx_stream_start(struct stream *stream, const struct device *dev)
 {
 	const struct i2s_stm32_cfg *cfg = dev->config;
-	size_t mem_block_size;
+	size_t mem_block_size = 0;
 	int ret;
 
 	ret = queue_get(stream->msgq, &stream->mem_block,

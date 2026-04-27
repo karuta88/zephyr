@@ -284,9 +284,9 @@ int dns_dispatcher_unregister(struct dns_socket_dispatcher *ctx);
  * Enumerate the extensions that are available in the address info
  */
 enum dns_resolve_extension {
-	DNS_RESOLVE_NONE = 0, /*<< No extension in use   */
-	DNS_RESOLVE_TXT,      /*<< TXT field is returned */
-	DNS_RESOLVE_SRV,      /*<< SRV field is returned */
+	DNS_RESOLVE_NONE = 0, /**< No extension in use   */
+	DNS_RESOLVE_TXT,      /**< TXT field is returned */
+	DNS_RESOLVE_SRV,      /**< SRV field is returned */
 };
 
 /** TXT record information */
@@ -530,6 +530,11 @@ struct dns_resolve_context {
 		 */
 		uint16_t query_hash;
 
+		/* Number of additional queries sent to resolve CNAME record
+		 * name aliases.
+		 */
+		uint8_t additional_queries;
+
 		/** Flag to indicate that the callback has been called at least once. */
 		bool cb_called;
 	} queries[DNS_NUM_CONCUR_QUERIES];
@@ -541,6 +546,11 @@ struct dns_resolve_context {
 	/** DNS packet forwarding callback. */
 	dns_resolve_pkt_fw_cb_t pkt_fw_cb;
 #endif /* CONFIG_DNS_RESOLVER_PACKET_FORWARDING */
+
+/** @cond INTERNAL_HIDDEN */
+	/** How many times the DNS context init been called. */
+	int init_called;
+/** @endcond */
 };
 
 /** @cond INTERNAL_HIDDEN */
@@ -899,6 +909,27 @@ static inline int dns_get_addr_info(const char *query,
 static inline int dns_cancel_addr_info(uint16_t dns_id)
 {
 	return dns_resolve_cancel(dns_resolve_get_default(), dns_id);
+}
+
+/**
+ * @brief Cancel a pending DNS query using id, name and type.
+ *
+ * @details This releases DNS resources used by a pending query.
+ *
+ * @param query_name Name of the resource we are trying to query (hostname)
+ * @param query_type Type of the query (A or AAAA)
+ * @param dns_id DNS id of the pending query
+ *
+ * @return 0 if ok, <0 if error.
+ */
+static inline int dns_cancel_addr_info_with_name(const char *query_name,
+					enum dns_query_type query_type,
+					uint16_t dns_id)
+{
+	return dns_resolve_cancel_with_name(dns_resolve_get_default(),
+				dns_id,
+				query_name,
+				query_type);
 }
 
 /**

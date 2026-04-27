@@ -163,16 +163,16 @@ enum sd_voltage {
  * @brief SD host controller capabilities
  *
  * SD host controller capability flags. These flags should be set by the SDHC
- * driver, using the @ref sdhc_get_host_props api.
+ * driver, using the @ref sdhc_get_host_props api. These are packed to fit the capabilities register
+ * in the standard specification by the SD Association.
  */
 struct sdhc_host_caps {
-	unsigned int timeout_clk_freq: 5;		/**< Timeout clock frequency */
+	unsigned int timeout_clk_freq: 6;		/**< Timeout clock frequency */
 	unsigned int _rsvd_6: 1;			/**< Reserved */
 	unsigned int timeout_clk_unit: 1;		/**< Timeout clock unit */
 	unsigned int sd_base_clk: 8;			/**< SD base clock frequency */
 	unsigned int max_blk_len: 2;			/**< Max block length */
 	unsigned int bus_8_bit_support: 1;		/**< 8-bit Support for embedded device */
-	unsigned int bus_4_bit_support: 1;		/**< 4 bit bus support */
 	unsigned int adma_2_support: 1;			/**< ADMA2 support */
 	unsigned int _rsvd_20: 1;			/**< Reserved */
 	unsigned int high_spd_support: 1;		/**< High speed support */
@@ -194,6 +194,7 @@ struct sdhc_host_caps {
 	unsigned int drv_type_d_support: 1;		/**< Driver type D support */
 	unsigned int _rsvd_39: 1;			/**< Reserved */
 	unsigned int retune_timer_count: 4;		/**< Timer count for re-tuning */
+	unsigned int _rsvd_44: 1;			/**< Reserved */
 	unsigned int sdr50_needs_tuning: 1;		/**< Use tuning for SDR50 */
 	unsigned int retuning_mode: 2;			/**< Re-tuning mode */
 	unsigned int clk_multiplier: 8;			/**< Clock multiplier */
@@ -201,8 +202,6 @@ struct sdhc_host_caps {
 	unsigned int adma3_support: 1;			/**< ADMA3 support */
 	unsigned int vdd2_180_support: 1;		/**< 1.8V VDD2 support */
 	unsigned int _rsvd_61: 3;			/**< Reserved */
-	unsigned int hs200_support: 1;			/**< HS200 support */
-	unsigned int hs400_support: 1;			/**< HS400 support */
 };
 
 /**
@@ -235,6 +234,9 @@ struct sdhc_host_props {
 	uint32_t max_current_330; /*!< Max current (in mA) at 3.3V */
 	uint32_t max_current_300; /*!< Max current (in mA) at 3.0V */
 	uint32_t max_current_180; /*!< Max current (in mA) at 1.8V */
+	bool bus_4_bit_support; /**< 4 bit bus support */
+	bool hs200_support; /**< HS200 support */
+	bool hs400_support; /**< HS400 support */
 	bool is_spi; /*!< Is the host using SPI mode */
 };
 
@@ -294,7 +296,7 @@ __syscall int sdhc_hw_reset(const struct device *dev);
 
 static inline int z_impl_sdhc_hw_reset(const struct device *dev)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->reset) {
 		return -ENOSYS;
@@ -324,7 +326,7 @@ static inline int z_impl_sdhc_request(const struct device *dev,
 				      struct sdhc_command *cmd,
 				      struct sdhc_data *data)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->request) {
 		return -ENOSYS;
@@ -350,7 +352,7 @@ __syscall int sdhc_set_io(const struct device *dev, struct sdhc_io *io);
 static inline int z_impl_sdhc_set_io(const struct device *dev,
 				     struct sdhc_io *io)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->set_io) {
 		return -ENOSYS;
@@ -374,7 +376,7 @@ __syscall int sdhc_card_present(const struct device *dev);
 
 static inline int z_impl_sdhc_card_present(const struct device *dev)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->get_card_present) {
 		return -ENOSYS;
@@ -399,7 +401,7 @@ __syscall int sdhc_execute_tuning(const struct device *dev);
 
 static inline int z_impl_sdhc_execute_tuning(const struct device *dev)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->execute_tuning) {
 		return -ENOSYS;
@@ -423,7 +425,7 @@ __syscall int sdhc_card_busy(const struct device *dev);
 
 static inline int z_impl_sdhc_card_busy(const struct device *dev)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->card_busy) {
 		return -ENOSYS;
@@ -449,7 +451,7 @@ __syscall int sdhc_get_host_props(const struct device *dev,
 static inline int z_impl_sdhc_get_host_props(const struct device *dev,
 					     struct sdhc_host_props *props)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->get_host_props) {
 		return -ENOSYS;
@@ -481,7 +483,7 @@ static inline int z_impl_sdhc_enable_interrupt(const struct device *dev,
 					       sdhc_interrupt_cb_t callback,
 					       int sources, void *user_data)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->enable_interrupt) {
 		return -ENOSYS;
@@ -507,7 +509,7 @@ __syscall int sdhc_disable_interrupt(const struct device *dev, int sources);
 static inline int z_impl_sdhc_disable_interrupt(const struct device *dev,
 						int sources)
 {
-	const struct sdhc_driver_api *api = (const struct sdhc_driver_api *)dev->api;
+	const struct sdhc_driver_api *api = DEVICE_API_GET(sdhc, dev);
 
 	if (!api->disable_interrupt) {
 		return -ENOSYS;

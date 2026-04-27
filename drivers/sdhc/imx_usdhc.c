@@ -23,7 +23,6 @@
 LOG_MODULE_REGISTER(usdhc, CONFIG_SDHC_LOG_LEVEL);
 
 #include <fsl_usdhc.h>
-#include <fsl_cache.h>
 #include <zephyr/irq.h>
 
 enum transfer_callback_status {
@@ -69,6 +68,8 @@ struct usdhc_config {
 	bool detect_dat3;
 	bool detect_cd;
 	bool no_180_vol;
+	bool no_330_vol;
+	bool no_300_vol;
 	uint32_t data_timeout;
 	uint32_t read_watermark;
 	uint32_t write_watermark;
@@ -135,10 +136,20 @@ static void sdio_interrupt_cb(USDHC_Type *usdhc, void *user_data)
 {
 	const struct device *dev = user_data;
 	struct usdhc_data *data = dev->data;
+	USDHC_Type *base = get_base(dev);
 
 	if (data->sdhc_cb) {
 		data->sdhc_cb(dev, SDHC_INT_SDIO, data->sdhc_cb_user_data);
 	}
+
+	/*
+	 * Match the behavior of other Zephyr sdhc drivers, which automatically
+	 * mask the card interrupt when it arrives and expect an asynchronous
+	 * handler to re-enable it once the card's interrupt condition has been
+	 * cleared.
+	 */
+	USDHC_DisableInterruptStatus(base, kUSDHC_CardInterruptFlag);
+	USDHC_DisableInterruptSignal(base, kUSDHC_CardInterruptFlag);
 }
 
 static void card_inserted_cb(USDHC_Type *usdhc, void *user_data)
@@ -225,14 +236,14 @@ static void imx_usdhc_error_recovery(const struct device *dev)
 
 	if (status & kUSDHC_CommandInhibitFlag) {
 		/* Reset command line */
-		if (!USDHC_Reset(base, kUSDHC_ResetCommand, 100U)) {
+		if (!USDHC_Reset(base, kUSDHC_ResetCommand, 1000U)) {
 			LOG_ERR("Failed to reset command line");
 		}
 	}
 	if (((status & (uint32_t)kUSDHC_DataInhibitFlag) != 0U) ||
 	    (USDHC_GetAdmaErrorStatusFlags(base) != 0U)) {
 		/* Reset data line */
-		if (!USDHC_Reset(base, kUSDHC_ResetData, 100U)) {
+		if (!USDHC_Reset(base, kUSDHC_ResetData, 1000U)) {
 			LOG_ERR("Failed to reset data line");
 		}
 	}
@@ -262,8 +273,16 @@ static void imx_usdhc_init_host_props(const struct device *dev)
 	} else {
 		props->host_caps.vol_180_support = (bool)(caps.flags & kUSDHC_SupportV180Flag);
 	}
-	props->host_caps.vol_300_support = (bool)(caps.flags & kUSDHC_SupportV300Flag);
-	props->host_caps.vol_330_support = (bool)(caps.flags & kUSDHC_SupportV330Flag);
+	if (cfg->no_300_vol) {
+		props->host_caps.vol_300_support = false;
+	} else {
+		props->host_caps.vol_300_support = (bool)(caps.flags & kUSDHC_SupportV300Flag);
+	}
+	if (cfg->no_330_vol) {
+		props->host_caps.vol_330_support = false;
+	} else {
+		props->host_caps.vol_330_support = (bool)(caps.flags & kUSDHC_SupportV330Flag);
+	}
 	props->host_caps.suspend_res_support = (bool)(caps.flags & kUSDHC_SupportSuspendResumeFlag);
 	props->host_caps.sdma_support = (bool)(caps.flags & kUSDHC_SupportDmaFlag);
 	props->host_caps.high_spd_support = (bool)(caps.flags & kUSDHC_SupportHighSpeedFlag);
@@ -273,9 +292,9 @@ static void imx_usdhc_init_host_props(const struct device *dev)
 	props->host_caps.sdr104_support = (bool)(caps.flags & kUSDHC_SupportSDR104Flag);
 	props->host_caps.sdr50_support = (bool)(caps.flags & kUSDHC_SupportSDR50Flag);
 	props->host_caps.bus_8_bit_support = (bool)(caps.flags & kUSDHC_Support8BitFlag);
-	props->host_caps.bus_4_bit_support = (bool)(caps.flags & kUSDHC_Support4BitFlag);
-	props->host_caps.hs200_support = (bool)(cfg->mmc_hs200_1_8v);
-	props->host_caps.hs400_support = (bool)(cfg->mmc_hs400_1_8v);
+	props->bus_4_bit_support = (bool)(caps.flags & kUSDHC_Support4BitFlag);
+	props->hs200_support = (bool)(cfg->mmc_hs200_1_8v);
+	props->hs400_support = (bool)(cfg->mmc_hs400_1_8v);
 }
 
 /*
@@ -283,10 +302,18 @@ static void imx_usdhc_init_host_props(const struct device *dev)
  */
 static int imx_usdhc_reset(const struct device *dev)
 {
+	const struct usdhc_config *cfg = dev->config;
+	struct usdhc_data *data = dev->data;
 	USDHC_Type *base = get_base(dev);
 
-	/* Switch to default I/O voltage of 3.3V */
-	imx_usdhc_select_1_8v(base, false);
+	/* Switch to default I/O voltage for this board */
+	if (cfg->no_330_vol && cfg->no_300_vol) {
+		imx_usdhc_select_1_8v(base, true);
+		data->host_io.signal_voltage = SD_VOL_1_8_V;
+	} else {
+		imx_usdhc_select_1_8v(base, false);
+		data->host_io.signal_voltage = SD_VOL_3_3_V;
+	}
 	USDHC_EnableDDRMode(base, false, 0U);
 #if defined(FSL_FEATURE_USDHC_HAS_SDR50_MODE) && (FSL_FEATURE_USDHC_HAS_SDR50_MODE)
 	USDHC_EnableStandardTuning(base, 0, 0, false);
@@ -654,7 +681,7 @@ static int imx_usdhc_execute_tuning(const struct device *dev)
 #endif
 
 	/* Reset tuning circuit */
-	USDHC_Reset(base, kUSDHC_ResetTuning, 100U);
+	USDHC_Reset(base, kUSDHC_ResetTuning, 1000U);
 	/* Disable standard tuning */
 	USDHC_EnableStandardTuning(base, IMX_USDHC_STANDARD_TUNING_START, IMX_USDHC_TUNING_STEP,
 				   false);
@@ -1149,6 +1176,19 @@ static int imx_usdhc_init(const struct device *dev)
 	data->host_io.driver_type = SD_DRIVER_TYPE_B;
 	data->host_io.signal_voltage = SD_VOL_3_3_V;
 
+	/*
+	 * If the board only supports 1.8V I/O (no 3.3V and no 3.0V), set
+	 * USDHC VSELECT bit immediately so that the data line sampling
+	 * threshold matches the actual I/O voltage. Without this, the USDHC
+	 * in 3.3V mode cannot sample 1.8V signals on the DAT lines.
+	 * This is done here (not via set_io) to avoid the clock gating
+	 * sequence that the voltage switch procedure would trigger.
+	 */
+	if (cfg->no_330_vol && cfg->no_300_vol) {
+		imx_usdhc_select_1_8v(base, true);
+		data->host_io.signal_voltage = SD_VOL_1_8_V;
+	}
+
 	return k_sem_init(&data->transfer_sem, 0, 1);
 }
 
@@ -1203,6 +1243,8 @@ static DEVICE_API(sdhc, usdhc_api) = {
 		.detect_dat3 = DT_INST_PROP(n, detect_dat3),                                       \
 		.detect_cd = DT_INST_PROP(n, detect_cd),                                           \
 		.no_180_vol = DT_INST_PROP(n, no_1_8_v),                                           \
+		.no_330_vol = DT_INST_PROP(n, no_3_3_v),                                           \
+		.no_300_vol = DT_INST_PROP(n, no_3_0_v),                                           \
 		.read_watermark = DT_INST_PROP(n, read_watermark),                                 \
 		.write_watermark = DT_INST_PROP(n, write_watermark),                               \
 		.max_current_330 = DT_INST_PROP(n, max_current_330),                               \
